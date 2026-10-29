@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#10151c">
+<title>LoRa Tracker</title>
+<style>
+  :root { --bg:#10151c; --panel:#18202b; --text:#e8edf3; --dim:#8b97a6; --accent:#ff5a36; --ok:#3ecf8e; --bad:#ff5a5a; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--text); overflow:hidden;
+    font:15px/1.35 system-ui, -apple-system, Roboto, sans-serif; }
+  #cv { position:absolute; inset:0; touch-action:none; }
+  .top { position:absolute; z-index:10; top:max(10px, env(safe-area-inset-top)); left:10px; right:10px;
+    display:flex; gap:8px; align-items:center; }
+  .pill { background:var(--panel); border-radius:999px; padding:8px 14px; box-shadow:0 2px 8px #0006; }
+  button { font:inherit; color:var(--text); background:var(--panel); border:0; border-radius:999px;
+    padding:8px 14px; box-shadow:0 2px 8px #0006; }
+  button.primary { background:var(--accent); color:#fff; font-weight:600; }
+  button.on { outline:2px solid var(--accent); }
+  .spacer { flex:1; }
+  .side { position:absolute; z-index:10; right:10px; top:calc(max(10px, env(safe-area-inset-top)) + 54px);
+    display:flex; flex-direction:column; gap:8px; }
+  .side button { width:44px; height:44px; padding:0; font-size:20px; line-height:1; }
+  .side button.small { font-size:12px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--bad); margin-right:6px; }
+  .dot.ok { background:var(--ok); }
+  .panel { position:absolute; z-index:10; left:10px; right:10px; bottom:max(10px, env(safe-area-inset-bottom));
+    background:var(--panel); border-radius:16px; padding:12px 14px; box-shadow:0 2px 12px #0008;
+    display:grid; grid-template-columns:repeat(4, 1fr); gap:10px 8px; }
+  .stat .v { font-size:18px; font-weight:600; }
+  .stat .l { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
+  .stat.wide { grid-column: span 2; }
+  #arrow { display:inline-block; transition:transform .3s; }
+  .stale { color:var(--bad); }
+  @media (max-width:380px) { .panel { grid-template-columns:repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div class="top">
+  <div class="pill"><span class="dot" id="dot"></span><span id="status">Not connected</span></div>
+  <div class="spacer"></div>
+  <button id="demoBtn">Demo</button>
+  <button id="connectBtn" class="primary">Connect</button>
+</div>
+
+<div class="side">
+  <button id="zoomIn" aria-label="Zoom in">+</button>
+  <button id="zoomOut" aria-label="Zoom out">−</button>
+  <button id="fitBtn" class="small on">Fit</button>
+  <button id="clearBtn" class="small">Clear</button>
+</div>
+
+<div class="panel" id="panel">
+  <div class="stat"><div class="v" id="dist">–</div><div class="l">Distance</div></div>
+  <div class="stat"><div class="v"><span id="arrow">➤</span> <span id="brg">–</span></div><div class="l">Bearing</div></div>
+  <div class="stat"><div class="v" id="spd">–</div><div class="l">Speed</div></div>
+  <div class="stat"><div class="v" id="alt">–</div><div class="l">Altitude</div></div>
+  <div class="stat"><div class="v" id="sats">–</div><div class="l">Satellites</div></div>
+  <div class="stat"><div class="v" id="sig">–</div><div class="l">RSSI / SNR</div></div>
+  <div class="stat wide"><div class="v" id="age">–</div><div class="l">Last update</div></div>
+</div>
+
+<script>
+// ---- must match config.h ----
+const SERVICE = '8a1f0001-5b7c-4a52-9c3e-0d4b6f2e7a10';
+const CHAR    = '8a1f0002-5b7c-4a52-9c3e-0d4b6f2e7a10';
+const MAGIC   = 0xA5;
+
+const $ = id => document.getElementById(id);
+const R = 6371000, rad = d => d * Math.PI / 180, deg = r => r * 180 / Math.PI;
+const M_PER_DEG = rad(1) * R;
+const TRAIL_KEY = 'loratrack.trail.v1', MAX_TRAIL = 3000;
+
+let me = null;            // {lat, lon, acc} phone position
+let tracker = null;       // latest tracker packet
+let trail = [];           // [{lat, lon}, ...]
+let lastRx = 0, auto = true;
+const view = { cx: 0, cy: 0, scale: 1 };   // centre in metres, pixels per metre
+
+// ---------- persistence (best effort) ----------
+try {
+  const saved = JSON.parse(localStorage.getItem(TRAIL_KEY) || '[]');
+  if (Array.isArray(saved)) trail = saved.map(p => ({ lat: p[0], lon: p[1] }));
+} catch (e) {}
+function saveTrail() {
+  try { localStorage.setItem(TRAIL_KEY, JSON.stringify(trail.map(p => [+p.lat.toFixed(6), +p.lon.toFixed(6)]))); } catch (e) {}
+}
+
+// ---------- geometry ----------
+function distance(a, b) {
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function bearing(a, b) {
+  const y = Math.sin(rad(b.lon - a.lon)) * Math.cos(rad(b.lat));
+  const x = Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) -
+            Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lon - a.lon));
+  return (deg(Math.atan2(y, x)) + 360) % 360;
+}
+const fmtDist = m => m < 1000 ? Math.round(m) + ' m' : (m/1000).toFixed(2) + ' km';
+// local flat projection (metres east/north of origin o)
+function toXY(p, o) {
+  return { x: (p.lon - o.lon) * M_PER_DEG * Math.cos(rad(o.lat)), y: (p.lat - o.lat) * M_PER_DEG };
+}
+function niceStep(m) {
+  const pow = Math.pow(10, Math.floor(Math.log10(m)));
+  const f = m / pow;
+  return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * pow;
+}
+const fmtRing = m => m >= 1000 ? (m/1000) + ' km' : m + ' m';
+
+// ---------- canvas drawing (no map, no network) ----------
+const cv = $('cv'), ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = window.devicePixelRatio || 1; W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  draw();
+}
+addEventListener('resize', resize);
+
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#10151c'; ctx.fillRect(0, 0, W, H);
+
+  const o = me || trail[0] || null;
+  if (!o) {
+    ctx.fillStyle = '#8b97a6'; ctx.font = '15px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Waiting for a position…', W / 2, H / 2);
+    return;
+  }
+  const top = 70, bottom = H - $('panel').offsetHeight - 24;
+  const ah = Math.max(bottom - top, 100), midY = top + ah / 2;
+
+  const pts = trail.map(p => toXY(p, o));
+  const trk = tracker ? toXY(tracker, o) : null;
+  const meXY = me ? { x: 0, y: 0 } : null;
+
+  if (auto) {
+    const all = pts.slice();
+    if (meXY) all.push(meXY);
+    let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+    for (const p of all) { minx = Math.min(minx, p.x); maxx = Math.max(maxx, p.x); miny = Math.min(miny, p.y); maxy = Math.max(maxy, p.y); }
+    if (!all.length) { minx = maxx = miny = maxy = 0; }
+    const ext = Math.max(maxx - minx, maxy - miny, 30);
+    view.scale = Math.min(W - 60, ah - 40) / ext;
+    view.cx = (minx + maxx) / 2; view.cy = (miny + maxy) / 2;
+  }
+  const sx = x => W / 2 + (x - view.cx) * view.scale;
+  const sy = y => midY - (y - view.cy) * view.scale;
+  const ox = sx(0), oy = sy(0);
+
+  // range rings around the phone (or first point)
+  const step = niceStep(110 / view.scale);
+  const maxR = Math.hypot(W, H);
+  ctx.lineWidth = 1; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'left';
+  for (let k = 1; k * step * view.scale < maxR && k < 60; k++) {
+    const r = k * step * view.scale;
+    ctx.strokeStyle = '#243040'; ctx.beginPath(); ctx.arc(ox, oy, r, 0, Math.PI * 2); ctx.stroke();
+    const ly = oy - r - 4;                     // label sits on the vertical axis, just above each ring
+    if (ox > 0 && ox < W - 50 && ly > 60 && ly < bottom) { ctx.fillStyle = '#6f8096'; ctx.fillText(fmtRing(k * step), ox + 5, ly); }
+  }
+  // crosshair through origin
+  ctx.strokeStyle = '#1c2633';
+  ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H); ctx.moveTo(0, oy); ctx.lineTo(W, oy); ctx.stroke();
+
+  // trail
+  if (pts.length > 1) {
+    ctx.strokeStyle = '#ff5a36'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))); ctx.stroke();
+  }
+  // line from phone to tracker
+  if (trk && meXY) {
+    ctx.setLineDash([6, 8]); ctx.strokeStyle = '#5aa9ff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(sx(trk.x), sy(trk.y)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // phone position + accuracy
+  if (meXY) {
+    if (me.acc) { ctx.fillStyle = '#2f80ff22'; ctx.beginPath(); ctx.arc(ox, oy, Math.max(me.acc * view.scale, 0), 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#2f80ff'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(ox, oy, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  // tracker position
+  if (trk) {
+    const tx = sx(trk.x), ty = sy(trk.y);
+    ctx.fillStyle = '#ff5a36'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(tx, ty, 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  // north marker
+  ctx.fillStyle = '#8b97a6'; ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('N', W - 32, top + 72); ctx.fillText('↑', W - 32, top + 88);
+}
+
+// pan by dragging (switches to manual view)
+let drag = null;
+cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag = { x: e.clientX, y: e.clientY };
+  setManual(); view.cx -= dx / view.scale; view.cy += dy / view.scale; draw();
+});
+cv.addEventListener('pointerup', () => drag = null);
+cv.addEventListener('pointercancel', () => drag = null);
+cv.addEventListener('wheel', e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
+
+function setManual() { auto = false; $('fitBtn').classList.remove('on'); }
+function zoom(f) { setManual(); view.scale *= f; draw(); }
+$('zoomIn').onclick = () => zoom(1.5);
+$('zoomOut').onclick = () => zoom(1 / 1.5);
+$('fitBtn').onclick = () => { auto = true; $('fitBtn').classList.add('on'); draw(); };
+$('clearBtn').onclick = () => {
+  if (!confirm('Clear the saved track?')) return;
+  trail = tracker ? [{ lat: tracker.lat, lon: tracker.lon }] : []; saveTrail(); draw();
+};
+
+// ---------- phone's own position (works offline: it's the phone's GPS) ----------
+if ('geolocation' in navigator) {
+  navigator.geolocation.watchPosition(pos => {
+    me = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc: pos.coords.accuracy };
+    refreshStats(); draw();
+  }, err => console.warn('geolocation', err.message), { enableHighAccuracy: true, maximumAge: 2000 });
+}
+
+// ---------- packet handling ----------
+function handlePacket(dv) {
+  if (dv.byteLength < 18 || dv.getUint8(0) !== MAGIC) return;
+  const le = true;
+  const p = {
+    node: dv.getUint8(1),
+    seq:  dv.getUint16(2, le),
+    lat:  dv.getInt32(4, le) / 1e7,
+    lon:  dv.getInt32(8, le) / 1e7,
+    alt:  dv.getInt16(12, le),
+    spd:  dv.getUint8(14),
+    sats: dv.getUint8(15) & 0x7f,
+    fix:  !!(dv.getUint8(15) & 0x80),
+    rssi: dv.getInt8(16),
+    snr:  dv.getInt8(17),
+  };
+  lastRx = Date.now();
+  $('sats').textContent = p.sats;
+  $('sig').textContent = p.rssi + ' / ' + p.snr;
+  if (!p.fix) { $('status').textContent = 'Tracker has no GPS fix'; return; }
+
+  $('status').textContent = 'Tracking #' + p.node;
+  tracker = p;
+  const last = trail[trail.length - 1];
+  if (!last || distance(last, p) >= 2) {            // skip points closer than 2 m
+    trail.push({ lat: p.lat, lon: p.lon });
+    if (trail.length > MAX_TRAIL) trail.shift();
+    saveTrail();
+  }
+  $('spd').textContent = p.spd + ' km/h';
+  $('alt').textContent = p.alt + ' m';
+  refreshStats(); draw();
+}
+
+function refreshStats() {
+  if (tracker && me) {
+    $('dist').textContent = fmtDist(distance(me, tracker));
+    const b = bearing(me, tracker);
+    $('brg').textContent = Math.round(b) + '°';
+    $('arrow').style.transform = 'rotate(' + (b - 90) + 'deg)';   // ➤ points east at 0deg
+  }
+}
+setInterval(() => {
+  if (!lastRx) return;
+  const s = Math.round((Date.now() - lastRx) / 1000);
+  const el = $('age');
+  el.textContent = s < 60 ? s + ' s ago' : Math.floor(s/60) + ' min ago';
+  el.className = 'v' + (s > 30 ? ' stale' : '');
+}, 1000);
+
+// ---------- Bluetooth ----------
+let device = null, demoTimer = null;
+function setConn(ok, text) { $('dot').className = 'dot' + (ok ? ' ok' : ''); $('status').textContent = text; }
+
+async function connectGatt() {
+  setConn(false, 'Connecting…');
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  const chr = await svc.getCharacteristic(CHAR);
+  chr.addEventListener('characteristicvaluechanged', e => handlePacket(e.target.value));
+  await chr.startNotifications();
+  setConn(true, 'Connected, waiting for tracker…');
+  try { handlePacket(await chr.readValue()); } catch (e) {}
+}
+
+async function onDisconnected() {
+  setConn(false, 'Disconnected, retrying…');
+  for (let i = 0; i < 5 && device && !device.gatt.connected; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try { await connectGatt(); return; } catch (e) { /* retry */ }
+  }
+  if (!device.gatt.connected) setConn(false, 'Disconnected');
+}
+
+$('connectBtn').onclick = async () => {
+  if (!navigator.bluetooth) { alert('Web Bluetooth needs Chrome on Android, on a page served over HTTPS.'); return; }
+  try {
+    stopDemo();
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    await connectGatt();
+  } catch (e) { setConn(false, e.name === 'NotFoundError' ? 'Not connected' : 'Error: ' + e.message); }
+};
+
+// ---------- Demo mode (no hardware needed) ----------
+function stopDemo() { if (demoTimer) { clearInterval(demoTimer); demoTimer = null; $('demoBtn').classList.remove('on'); } }
+$('demoBtn').onclick = () => {
+  if (demoTimer) { stopDemo(); return; }
+  $('demoBtn').classList.add('on');
+  const c = me || { lat: 39.5, lon: -98.35 };
+  let t = 0, seq = 0;
+  demoTimer = setInterval(() => {
+    t += 0.08;
+    const buf = new DataView(new ArrayBuffer(18));
+    buf.setUint8(0, MAGIC); buf.setUint8(1, 1); buf.setUint16(2, seq++, true);
+    buf.setInt32(4, Math.round((c.lat + 0.004 * Math.sin(t)) * 1e7), true);
+    buf.setInt32(8, Math.round((c.lon + 0.006 * Math.cos(t)) * 1e7), true);
+    buf.setInt16(12, 1200, true); buf.setUint8(14, 18); buf.setUint8(15, 0x80 | 9);
+    buf.setInt8(16, -90); buf.setInt8(17, 7);
+    handlePacket(buf);
+  }, 1000);
+};
+
+// ---------- offline caching (needs one visit over HTTPS first) ----------
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+resize();
+</script>
+</body>
+</html>
