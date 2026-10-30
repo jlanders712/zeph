@@ -1,0 +1,1 @@
+Run: bash get-libs.sh (from the phone/ folder) to fill this folder.
