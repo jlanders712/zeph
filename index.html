@@ -50,7 +50,6 @@
 <div class="top">
   <div class="pill"><span class="dot" id="dot"></span><span id="status">Not connected</span></div>
   <div class="spacer"></div>
-  <button id="demoBtn">Demo</button>
   <button id="connectBtn" class="primary">Connect</button>
 </div>
 
@@ -532,7 +531,7 @@ setInterval(() => {
 }, 1000);
 
 // ---------- Bluetooth ----------
-let device = null, demoTimer = null;
+let device = null;
 function setConn(ok, text) { $('dot').className = 'dot' + (ok ? ' ok' : ''); $('status').textContent = text; }
 
 async function connectGatt() {
@@ -558,30 +557,10 @@ async function onDisconnected() {
 $('connectBtn').onclick = async () => {
   if (!navigator.bluetooth) { alert('Web Bluetooth needs Chrome on Android, on a page served over HTTPS.'); return; }
   try {
-    stopDemo();
     device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
     device.addEventListener('gattserverdisconnected', onDisconnected);
     await connectGatt();
   } catch (e) { setConn(false, e.name === 'NotFoundError' ? 'Not connected' : 'Error: ' + e.message); }
-};
-
-// ---------- Demo mode (no hardware needed) ----------
-function stopDemo() { if (demoTimer) { clearInterval(demoTimer); demoTimer = null; $('demoBtn').classList.remove('on'); } }
-$('demoBtn').onclick = () => {
-  if (demoTimer) { stopDemo(); return; }
-  $('demoBtn').classList.add('on');
-  const c = me || { lat: 47.0, lon: -109.6 };
-  let t = 0, seq = 0;
-  demoTimer = setInterval(() => {
-    t += 0.08;
-    const buf = new DataView(new ArrayBuffer(18));
-    buf.setUint8(0, MAGIC); buf.setUint8(1, 1); buf.setUint16(2, seq++, true);
-    buf.setInt32(4, Math.round((c.lat + 0.004 * Math.sin(t)) * 1e7), true);
-    buf.setInt32(8, Math.round((c.lon + 0.006 * Math.cos(t)) * 1e7), true);
-    buf.setInt16(12, 1200, true); buf.setUint8(14, 18); buf.setUint8(15, 0x80 | 9);
-    buf.setInt8(16, -90); buf.setInt8(17, 7);
-    handlePacket(buf);
-  }, 1000);
 };
 
 // ---------- offline caching (needs one visit over HTTPS first) ----------
