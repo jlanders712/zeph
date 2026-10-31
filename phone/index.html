@@ -75,8 +75,12 @@
   <div class="attr" id="attrib">Map data © OpenStreetMap contributors · Protomaps · Terrain: Mapterhorn</div>
 </div>
 
-<script src="lib/maplibre-gl.js"></script>
-<script src="lib/pmtiles.js"></script>
+<script>
+  window.__libErr = [];   // collects why a map library failed to load
+  addEventListener('error', e => { if (e.filename && e.filename.includes('/lib/')) __libErr.push(e.filename.split('/').pop() + ': ' + e.message); });
+</script>
+<script src="lib/maplibre-gl.js" onerror="__libErr.push('maplibre-gl.js: file not found (404)')"></script>
+<script src="lib/pmtiles.js" onerror="__libErr.push('pmtiles.js: file not found (404)')"></script>
 <script>
 // ---- must match config.h ----
 const SERVICE = '8a1f0001-5b7c-4a52-9c3e-0d4b6f2e7a10';
@@ -252,6 +256,13 @@ function canvasZoom(f) { setManual(); view.scale *= f; draw(); }
 //  Offline map (MapLibre + PMTiles files kept in IndexedDB)
 // =====================================================================
 const haveLibs = () => typeof maplibregl !== 'undefined' && typeof pmtiles !== 'undefined';
+function libProblem() {
+  const st = [
+    'maplibre-gl.js ' + (typeof maplibregl !== 'undefined' ? 'OK' : 'NOT loaded'),
+    'pmtiles.js ' + (typeof pmtiles !== 'undefined' ? 'OK' : 'NOT loaded'),
+  ].join(', ');
+  return st + (window.__libErr && __libErr.length ? ' | ' + __libErr.join('; ') : '');
+}
 let map = null, mapReady = false, protocol = null, baseBounds = null;
 const mapFiles = { base: null, terrain: null };
 
@@ -436,7 +447,7 @@ $('mapBtn').onclick = () => $('fileIn').click();
 $('fileIn').onchange = async e => {
   const picked = Array.from(e.target.files || []); e.target.value = '';
   if (!picked.length) return;
-  if (!haveLibs()) { toast('Map libraries missing. Run get-libs.sh and host the lib/ folder (see README).', 9000); return; }
+  if (!haveLibs()) { toast('Map libraries missing: ' + libProblem(), 20000); return; }
   for (const f of picked) {
     let kind;
     try {
@@ -582,7 +593,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 (async function start() {
   resize();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}  // ask browser not to evict the map
-  if (!haveLibs()) return;                       // canvas view only
+  if (!haveLibs()) { toast('Map libraries not loaded: ' + libProblem(), 20000); return; }   // canvas view only
   try {
     mapFiles.base = (await idb.get('base')) || null;
     mapFiles.terrain = (await idb.get('terrain')) || null;
