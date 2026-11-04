@@ -7,8 +7,9 @@ echo Downloading map libraries into %cd%\lib ...
 curl.exe -fL --retry 3 -o lib\maplibre-gl.js  https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.js  || goto fail
 curl.exe -fL --retry 3 -o lib\maplibre-gl.css https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.css || goto fail
 curl.exe -fL --retry 3 -o lib\pmtiles.js      https://cdn.jsdelivr.net/npm/pmtiles@3/dist/pmtiles.js          || goto fail
+curl.exe -fL --retry 3 -o lib\maplibre-contour.js https://cdn.jsdelivr.net/npm/maplibre-contour@0.1.0/dist/index.min.js || goto fail
 echo.
-echo DONE. The lib folder now has maplibre-gl.js, maplibre-gl.css and pmtiles.js.
+echo DONE. The lib folder now has maplibre-gl.js, maplibre-gl.css, pmtiles.js and maplibre-contour.js.
 pause
 exit /b 0
 :fail

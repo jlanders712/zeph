@@ -58,6 +58,8 @@ if it's too big, or go to 13 if you have room. Remove `--dry-run` to write the f
 
 ```
 pmtiles extract https://download.mapterhorn.com/planet.pmtiles montana-terrain.pmtiles --bbox=-116.05,44.36,-104.04,49.00 --maxzoom=10 --dry-run
+
+pmtiles extract https://download.mapterhorn.com/6-12-22.pmtiles montana-terrain.pmtiles --bbox=-116.05,44.36,-107.96,49.00 --maxzoom=15 --dry-run
 ```
 
 ### 2c. Put the map on the phone

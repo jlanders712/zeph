@@ -50,6 +50,7 @@
 <div class="top">
   <div class="pill"><span class="dot" id="dot"></span><span id="status">Not connected</span></div>
   <div class="spacer"></div>
+  <button id="demoBtn">Demo</button>
   <button id="connectBtn" class="primary">Connect</button>
 </div>
 
@@ -57,7 +58,6 @@
   <button id="zoomIn" aria-label="Zoom in">+</button>
   <button id="zoomOut" aria-label="Zoom out">−</button>
   <button id="fitBtn" class="small on">Fit</button>
-  <button id="meBtn" class="small">Me</button>
   <button id="clearBtn" class="small">Clear</button>
   <button id="mapBtn" class="small">Map</button>
 </div>
@@ -72,7 +72,6 @@
   <div class="stat"><div class="v" id="sats">–</div><div class="l">Satellites</div></div>
   <div class="stat"><div class="v" id="sig">–</div><div class="l">RSSI / SNR</div></div>
   <div class="stat wide"><div class="v" id="age">–</div><div class="l">Last update</div></div>
-  <div class="stat"><div class="v" id="batt">–</div><div class="l">Battery Voltage</div></div>
   <div class="attr" id="attrib">Map data © OpenStreetMap contributors · Protomaps · Terrain: Mapterhorn</div>
 </div>
 
@@ -82,6 +81,7 @@
 </script>
 <script src="lib/maplibre-gl.js" onerror="__libErr.push('maplibre-gl.js: file not found (404)')"></script>
 <script src="lib/pmtiles.js" onerror="__libErr.push('pmtiles.js: file not found (404)')"></script>
+<script src="lib/maplibre-contour.js"></script><!-- optional: contour lines; the map still works without it -->
 <script>
 // ---- must match config.h ----
 const SERVICE = '8a1f0001-5b7c-4a52-9c3e-0d4b6f2e7a10';
@@ -265,6 +265,7 @@ function libProblem() {
   return st + (window.__libErr && __libErr.length ? ' | ' + __libErr.join('; ') : '');
 }
 let map = null, mapReady = false, protocol = null, baseBounds = null;
+const pmInst = { base: null, terrain: null };   // PMTiles readers for the saved files
 const mapFiles = { base: null, terrain: null };
 
 // Protomaps basemap colours (light, high-contrast for outdoor use)
@@ -277,9 +278,35 @@ const isPt   = ['==', ['geometry-type'], 'Point'];
 const kinds  = list => ['match', K, list, true, false];
 const zoomW  = (...stops) => ['interpolate', ['exponential', 1.5], ['zoom'], ...stops];
 
+// ---- contour lines (optional) ----
+const CONTOUR_FEET = true;        // true = feet (like US topo maps), false = metres
+const CONTOURS_ENABLED = true;    // set false to turn contour lines off
+// [minor, major] interval per zoom level, in the unit chosen above
+const CONTOUR_THRESHOLDS = CONTOUR_FEET
+  ? { 9: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [40, 200], 14: [20, 100], 15: [20, 100] }
+  : { 9: [400, 2000],  10: [200, 1000], 11: [100, 500],  12: [50, 250],  13: [20, 100], 14: [10, 50],  15: [10, 50] };
+
+// The contour plugin only knows how to fetch elevation tiles from a web address, but ours live inside
+// the browser. So requests to our private "__dem" address are answered from the saved terrain file.
+const DEM_PREFIX = new URL('.', location.href).href + '__dem/';
+let demPM = null, demMime = 'image/png', demSeq = 0;
+const realFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  const url = typeof input === 'string' ? input : ((input && input.url) || String(input));
+  return url.startsWith(DEM_PREFIX) ? serveDemTile(url.slice(DEM_PREFIX.length)) : realFetch(input, init);
+};
+async function serveDemTile(path) {
+  try {
+    const [z, x, y] = path.split(/[?#]/)[0].split('/').map(Number);
+    const t = demPM ? await demPM.getZxy(z, x, y) : null;
+    if (t && t.data) return new Response(t.data, { status: 200, headers: { 'Content-Type': demMime } });
+  } catch (e) { console.warn('dem tile', e); }
+  return new Response(null, { status: 404 });           // outside the saved area
+}
+
 function glyphsUrl() { return new URL('.', location.href).href + 'fonts/{fontstack}/{range}.pbf'; }
 
-function buildStyle(withTerrain) {
+function buildStyle(withTerrain, contourUrl) {
   const sources = {
     base:  { type: 'vector', url: 'pmtiles://base.pmtiles' },
     trail: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
@@ -288,6 +315,7 @@ function buildStyle(withTerrain) {
     me:    { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
   };
   if (withTerrain) sources.terrain = { type: 'raster-dem', url: 'pmtiles://terrain.pmtiles', encoding: 'terrarium', tileSize: 512 };
+  if (contourUrl) sources.contours = { type: 'vector', tiles: [contourUrl], maxzoom: 15 };
 
   const L = [];
   L.push({ id: 'bg', type: 'background', paint: { 'background-color': C.land } });
@@ -305,6 +333,10 @@ function buildStyle(withTerrain) {
     L.push({ id: 'hillshade', type: 'hillshade', source: 'terrain',
       paint: { 'hillshade-exaggeration': 0.6, 'hillshade-shadow-color': '#4d463b',
                'hillshade-highlight-color': '#ffffff', 'hillshade-accent-color': '#6f6455' } });
+  }
+  if (contourUrl) {   // contour lines sit above land and hillshade but below water, roads and labels
+    L.push({ id: 'contour-lines', type: 'line', source: 'contours', 'source-layer': 'contours', minzoom: 9,
+      paint: { 'line-color': '#8a5a2b', 'line-opacity': 0.55, 'line-width': ['match', ['get', 'level'], 1, 1.2, 0.5] } });
   }
   L.push({ id: 'water', type: 'fill', source: 'base', 'source-layer': 'water', filter: isPoly, paint: { 'fill-color': C.water } });
   L.push({ id: 'waterway', type: 'line', source: 'base', 'source-layer': 'water', filter: isLine,
@@ -336,6 +368,13 @@ function buildStyle(withTerrain) {
     filter: ['all', isPt, kinds(['peak', 'volcano'])],
     layout: Object.assign({}, label, { 'text-field': ['coalesce', ['get', 'name'], ''], 'text-size': 11, 'text-offset': [0, 0.9], 'text-anchor': 'top' }),
     paint: { 'text-color': '#5a3a22', 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 } });
+  if (contourUrl) {
+    L.push({ id: 'contour-labels', type: 'symbol', source: 'contours', 'source-layer': 'contours', minzoom: 11,
+      filter: ['>', ['get', 'level'], 0],
+      layout: { 'symbol-placement': 'line', 'text-size': 10, 'text-font': ['Noto Sans Regular'],
+                'text-field': ['concat', ['number-format', ['get', 'ele'], {}], CONTOUR_FEET ? ' ft' : ' m'] },
+      paint: { 'text-color': '#6b4423', 'text-halo-color': '#ffffff', 'text-halo-width': 1.2 } });
+  }
   L.push({ id: 'place-region', type: 'symbol', source: 'base', 'source-layer': 'places', maxzoom: 8,
     filter: kinds(['region', 'country']),
     layout: { 'text-font': ['Noto Sans Medium'], 'text-field': ['coalesce', ['get', 'name'], ''], 'text-size': 13,
@@ -372,6 +411,7 @@ async function registerFile(kind) {
   const file = new File([mapFiles[kind]], kind + '.pmtiles');   // fixed name = the key used in pmtiles:// URLs
   const p = new pmtiles.PMTiles(new pmtiles.FileSource(file));
   protocol.add(p);
+  pmInst[kind] = p;
   return p.getHeader();
 }
 
@@ -392,18 +432,37 @@ async function initMap() {
     const hb = await registerFile('base');
     baseBounds = [[hb.minLon, hb.minLat], [hb.maxLon, hb.maxLat]];
     const withTerrain = !!mapFiles.terrain;
-    if (withTerrain) await registerFile('terrain');
+    let contourUrl = null;
+    if (withTerrain) {
+      const ht = await registerFile('terrain');
+      if (CONTOURS_ENABLED && typeof mlcontour !== 'undefined') {
+        try {   // contour lines are a bonus: any failure here must not break the map itself
+          demPM = pmInst.terrain;
+          demMime = { 2: 'image/png', 3: 'image/jpeg', 4: 'image/webp', 5: 'image/avif' }[ht.tileType] || 'image/png';
+          const demSource = new mlcontour.DemSource({
+            url: DEM_PREFIX + '{z}/{x}/{y}', encoding: 'terrarium', maxzoom: ht.maxZoom,
+            worker: false, cacheSize: 100, timeoutMs: 15000, id: 'dem' + (++demSeq) });
+          demSource.setupMaplibre(maplibregl);
+          contourUrl = demSource.contourProtocolUrl({
+            multiplier: CONTOUR_FEET ? 3.28084 : 1, thresholds: CONTOUR_THRESHOLDS,
+            contourLayer: 'contours', elevationKey: 'ele', levelKey: 'level', extent: 4096, buffer: 1 });
+        } catch (e) {
+          console.warn('contours disabled', e); contourUrl = null;
+          toast('Contour lines unavailable: ' + (e.message || e), 8000);
+        }
+      }
+    }
 
     setMapMode(true);
     map = new maplibregl.Map({
-      container: 'map', style: buildStyle(withTerrain), bounds: baseBounds,
+      container: 'map', style: buildStyle(withTerrain, contourUrl), bounds: baseBounds,
       attributionControl: false, dragRotate: false, maxPitch: 0, fadeDuration: 0,
     });
     map.touchZoomRotate.disableRotation();
     map.on('load', () => { mapReady = true; updateMap(); });
     map.on('error', e => {
       const m = (e && e.error && e.error.message) || '';
-      if (/glyph|\.pbf/i.test(m)) return;           // missing font ranges are harmless
+      if (/glyph|\.pbf|__dem|Bad response/i.test(m)) return;   // missing fonts / elevation tiles outside your area are harmless
       console.warn('map error', e.error || e);
       toast('Map error: ' + m.slice(0, 120), 7000);
     });
@@ -442,16 +501,6 @@ function fitMap() {
   map.fitBounds([[x0, y0], [x1, y1]], {
     padding: { top: 80, bottom: $('panel').offsetHeight + 30, left: 40, right: 70 }, maxZoom: 15, duration: 0 });
 }
-function centerOnMe() {
-  if (!me) { toast('Waiting for your phone\'s location…'); return; }
-  setManual();                                   // stop auto-fit from pulling the view away
-  if (mapMode && map) {
-    map.easeTo({ center: [me.lon, me.lat], zoom: Math.max(map.getZoom(), 14), duration: 500 });
-  } else {
-    view.cx = 0; view.cy = 0;                    // in the plain view, your position is the origin
-    draw();
-  }
-}
 
 // ---------- loading .pmtiles files from the phone ----------
 $('mapBtn').onclick = () => $('fileIn').click();
@@ -487,7 +536,6 @@ function refresh() { refreshStats(); if (mapMode) updateMap(); else draw(); }
 $('zoomIn').onclick  = () => { if (mapMode && map) { setManual(); map.zoomIn(); } else canvasZoom(1.5); };
 $('zoomOut').onclick = () => { if (mapMode && map) { setManual(); map.zoomOut(); } else canvasZoom(1 / 1.5); };
 $('fitBtn').onclick  = () => { auto = true; $('fitBtn').classList.add('on'); if (mapMode) fitMap(); else draw(); };
-$('meBtn').onclick = centerOnMe;
 $('clearBtn').onclick = () => {
   if (!confirm('Clear the saved track?')) return;
   trail = tracker ? [{ lat: tracker.lat, lon: tracker.lon }] : []; saveTrail(); refresh();
@@ -544,7 +592,7 @@ setInterval(() => {
 }, 1000);
 
 // ---------- Bluetooth ----------
-let device = null;
+let device = null, demoTimer = null;
 function setConn(ok, text) { $('dot').className = 'dot' + (ok ? ' ok' : ''); $('status').textContent = text; }
 
 async function connectGatt() {
@@ -570,10 +618,30 @@ async function onDisconnected() {
 $('connectBtn').onclick = async () => {
   if (!navigator.bluetooth) { alert('Web Bluetooth needs Chrome on Android, on a page served over HTTPS.'); return; }
   try {
+    stopDemo();
     device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
     device.addEventListener('gattserverdisconnected', onDisconnected);
     await connectGatt();
   } catch (e) { setConn(false, e.name === 'NotFoundError' ? 'Not connected' : 'Error: ' + e.message); }
+};
+
+// ---------- Demo mode (no hardware needed) ----------
+function stopDemo() { if (demoTimer) { clearInterval(demoTimer); demoTimer = null; $('demoBtn').classList.remove('on'); } }
+$('demoBtn').onclick = () => {
+  if (demoTimer) { stopDemo(); return; }
+  $('demoBtn').classList.add('on');
+  const c = me || { lat: 47.0, lon: -109.6 };
+  let t = 0, seq = 0;
+  demoTimer = setInterval(() => {
+    t += 0.08;
+    const buf = new DataView(new ArrayBuffer(18));
+    buf.setUint8(0, MAGIC); buf.setUint8(1, 1); buf.setUint16(2, seq++, true);
+    buf.setInt32(4, Math.round((c.lat + 0.004 * Math.sin(t)) * 1e7), true);
+    buf.setInt32(8, Math.round((c.lon + 0.006 * Math.cos(t)) * 1e7), true);
+    buf.setInt16(12, 1200, true); buf.setUint8(14, 18); buf.setUint8(15, 0x80 | 9);
+    buf.setInt8(16, -90); buf.setInt8(17, 7);
+    handlePacket(buf);
+  }, 1000);
 };
 
 // ---------- offline caching (needs one visit over HTTPS first) ----------

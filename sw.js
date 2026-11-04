@@ -1,11 +1,12 @@
 // Caches the page, map libraries and fonts so everything opens with no internet after the first visit.
-const CACHE = 'loratrack-v3';
+const CACHE = 'loratrack-v4';
 const ASSETS = [
  "./",
  "index.html",
  "lib/maplibre-gl.js",
  "lib/maplibre-gl.css",
  "lib/pmtiles.js",
+ "lib/maplibre-contour.js",
  "fonts/Noto Sans Medium/0-255.pbf",
  "fonts/Noto Sans Medium/256-511.pbf",
  "fonts/Noto Sans Medium/8192-8447.pbf",

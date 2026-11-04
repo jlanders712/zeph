@@ -8,4 +8,5 @@ get() { curl -fL --retry 3 -o "$2" "$1"; [ -s "$2" ] || { echo "FAILED: $2"; exi
 get https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.js  lib/maplibre-gl.js
 get https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.css lib/maplibre-gl.css
 get https://cdn.jsdelivr.net/npm/pmtiles@3/dist/pmtiles.js          lib/pmtiles.js
+get https://cdn.jsdelivr.net/npm/maplibre-contour@0.1.0/dist/index.min.js lib/maplibre-contour.js
 echo "Done. Now host the phone/ folder over HTTPS (see README)."
