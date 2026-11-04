@@ -34,6 +34,7 @@ With map files it draws the same things on a real offline map of Montana.
      - https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.js
      - https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.css
      - https://cdn.jsdelivr.net/npm/pmtiles@3/dist/pmtiles.js
+     - https://cdn.jsdelivr.net/npm/maplibre-contour@0.1.0/dist/index.min.js  (save as `maplibre-contour.js`; optional, for contour lines)
 2. Host the whole `phone/` folder over HTTPS (GitHub Pages, Netlify, Cloudflare Pages). Do **not** put the
    big `.pmtiles` files in it.
 3. On the phone, open the URL once in **Chrome on Android**, then Chrome menu -> "Add to Home screen".
@@ -42,7 +43,6 @@ With map files it draws the same things on a real offline map of Montana.
 ### 2b. Make the Montana map files (on a computer)
 
 Get the `pmtiles` command-line tool from <https://github.com/protomaps/go-pmtiles/releases>.
-Run extract commands from command prompt in folder directory.
 
 **Base map** (roads, towns, rivers, lakes, land cover, peaks). Copy the latest daily build URL from
 <https://maps.protomaps.com/builds>:
@@ -55,11 +55,9 @@ pmtiles extract <build-url>.pmtiles montana.pmtiles --bbox=-116.05,44.36,-104.04
 if it's too big, or go to 13 if you have room. Remove `--dry-run` to write the file.
 
 **Terrain** (hillshade, optional) from Mapterhorn open elevation data:
-
+Western montana bounding box
 ```
-pmtiles extract https://download.mapterhorn.com/planet.pmtiles montana-terrain.pmtiles --bbox=-116.05,44.36,-104.04,49.00 --maxzoom=10 --dry-run
-
-pmtiles extract https://download.mapterhorn.com/6-12-22.pmtiles montana-terrain.pmtiles --bbox=-116.05,44.36,-107.96,49.00 --maxzoom=15 --dry-run
+pmtiles extract https://download.mapterhorn.com/planet.pmtiles montana-terrain.pmtiles --bbox=-116.05,44.36,-107.96,49.00 --maxzoom=12 --dry-run
 ```
 
 ### 2c. Put the map on the phone
@@ -71,6 +69,15 @@ delete the copies in Downloads afterwards. To remove the saved map, clear the si
 
 Buttons: + / - zoom, drag to pan, **Fit** re-centres on you and the tracker, **Clear** wipes the saved trail,
 **Demo** simulates a tracker, **Connect** pairs with the receiver (`LoRaTrack-RX`).
+
+### Contour lines
+
+If you load a terrain file, the page also draws contour lines (feet by default, with labels on the bold
+lines from zoom 11) using the `maplibre-contour` plugin. Near the top of the map section in `index.html`:
+`CONTOUR_FEET` (`false` = metres), `CONTOURS_ENABLED` (`false` = off) and `CONTOUR_THRESHOLDS` (minor/major
+interval per zoom level). Contours are computed on the phone from the terrain file, so their detail is
+limited by that file's maximum zoom. If you load a different terrain file, reload the page once. If the
+plugin file is missing or fails, the map still works without contours.
 
 ### Status of this part
 

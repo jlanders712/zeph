@@ -34,3 +34,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .cache/
+
+# Miscellaneous
+get-libs.bat
+get-libs.sh
