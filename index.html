@@ -26,6 +26,7 @@
     display:flex; flex-direction:column; gap:8px; }
   .side button { width:44px; height:44px; padding:0; font-size:20px; line-height:1; }
   .side button.small { font-size:12px; }
+  .side button svg { display: block; margin: auto; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--bad); margin-right:6px; }
   .dot.ok { background:var(--ok); }
   .panel { position:absolute; z-index:10; left:10px; right:10px; bottom:max(10px, env(safe-area-inset-bottom));
@@ -58,6 +59,13 @@
   <button id="zoomIn" aria-label="Zoom in">+</button>
   <button id="zoomOut" aria-label="Zoom out">−</button>
   <button id="fitBtn" class="small on">Fit</button>
+  <button id="meBtn" aria-label="Center on my location">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="7"/>
+      <circle cx="12" cy="12" r="2" fill="currentColor"/>
+      <path d="M12 1v4M12 19v4M1 12h4M19 12h4"/>
+    </svg>
+  </button>
   <button id="clearBtn" class="small">Clear</button>
   <button id="mapBtn" class="small">Map</button>
 </div>
@@ -501,6 +509,16 @@ function fitMap() {
   map.fitBounds([[x0, y0], [x1, y1]], {
     padding: { top: 80, bottom: $('panel').offsetHeight + 30, left: 40, right: 70 }, maxZoom: 15, duration: 0 });
 }
+function centerOnMe() {
+  if (!me) { toast('Waiting for your phone\'s location…'); return; }
+  setManual();                                   // stop auto-fit from pulling the view away
+  if (mapMode && map) {
+    map.easeTo({ center: [me.lon, me.lat], zoom: Math.max(map.getZoom(), 14), duration: 500 });
+  } else {
+    view.cx = 0; view.cy = 0;                    // in the plain view, your position is the origin
+    draw();
+  }
+}
 
 // ---------- loading .pmtiles files from the phone ----------
 $('mapBtn').onclick = () => $('fileIn').click();
@@ -536,6 +554,7 @@ function refresh() { refreshStats(); if (mapMode) updateMap(); else draw(); }
 $('zoomIn').onclick  = () => { if (mapMode && map) { setManual(); map.zoomIn(); } else canvasZoom(1.5); };
 $('zoomOut').onclick = () => { if (mapMode && map) { setManual(); map.zoomOut(); } else canvasZoom(1 / 1.5); };
 $('fitBtn').onclick  = () => { auto = true; $('fitBtn').classList.add('on'); if (mapMode) fitMap(); else draw(); };
+$('meBtn').onclick = centerOnMe;
 $('clearBtn').onclick = () => {
   if (!confirm('Clear the saved track?')) return;
   trail = tracker ? [{ lat: tracker.lat, lon: tracker.lon }] : []; saveTrail(); refresh();
