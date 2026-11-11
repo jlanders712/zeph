@@ -51,7 +51,6 @@
 <div class="top">
   <div class="pill"><span class="dot" id="dot"></span><span id="status">Not connected</span></div>
   <div class="spacer"></div>
-  <button id="demoBtn">Demo</button>
   <button id="connectBtn" class="primary">Connect</button>
 </div>
 
@@ -79,7 +78,8 @@
   <div class="stat"><div class="v" id="alt">–</div><div class="l">Altitude</div></div>
   <div class="stat"><div class="v" id="sats">–</div><div class="l">Satellites</div></div>
   <div class="stat"><div class="v" id="sig">–</div><div class="l">RSSI / SNR</div></div>
-  <div class="stat wide"><div class="v" id="age">–</div><div class="l">Last update</div></div>
+  <div class="stat"><div class="v" id="age">–</div><div class="l">Last update</div></div>
+  <div class="stat"><div class="v" id="batt">–</div><div class="l" id="battL">Tracker batt</div></div>
   <div class="attr" id="attrib">Map data © OpenStreetMap contributors · Protomaps · Terrain: Mapterhorn</div>
 </div>
 
@@ -560,9 +560,22 @@ $('clearBtn').onclick = () => {
   trail = tracker ? [{ lat: tracker.lat, lon: tracker.lon }] : []; saveTrail(); refresh();
 };
 
+// ---------- battery percentage ----------
+const LIPO = [[3300,0],[3500,5],[3600,15],[3700,35],[3750,50],[3800,60],[3900,75],[4000,85],[4100,95],[4200,100]];
+function battPct(mv) {
+  if (mv <= LIPO[0][0]) return 0;
+  for (let i = 1; i < LIPO.length; i++) {
+    if (mv <= LIPO[i][0]) {
+      const [v0, p0] = LIPO[i-1], [v1, p1] = LIPO[i];
+      return Math.round(p0 + (p1 - p0) * (mv - v0) / (v1 - v0));
+    }
+  }
+  return 100;
+}
+
 // ---------- packet handling ----------
 function handlePacket(dv) {
-  if (dv.byteLength < 18 || dv.getUint8(0) !== MAGIC) return;
+  if (dv.byteLength < 20 || dv.getUint8(0) !== MAGIC) return;
   const le = true;
   const p = {
     node: dv.getUint8(1),
@@ -573,12 +586,21 @@ function handlePacket(dv) {
     spd:  dv.getUint8(14),
     sats: dv.getUint8(15) & 0x7f,
     fix:  !!(dv.getUint8(15) & 0x80),
-    rssi: dv.getInt8(16),
-    snr:  dv.getInt8(17),
+    batt: dv.getUint16(16, le),   // millivolts, 0 = unknown
+    rssi: dv.getInt8(18),
+    snr:  dv.getInt8(19),
   };
   lastRx = Date.now();
   $('sats').textContent = p.sats;
   $('sig').textContent = p.rssi + ' / ' + p.snr;
+  if (p.batt > 0) {
+    const pct = battPct(p.batt);
+    $('batt').textContent = pct + '%';
+    $('batt').style.color = pct <= 15 ? 'var(--bad)' : '';
+    $('battL').textContent = 'Batt ' + (p.batt / 1000).toFixed(2) + 'V';
+  } else {
+    $('batt').textContent = '–';
+  }
   if (!p.fix) { $('status').textContent = 'Tracker has no GPS fix'; return; }
 
   $('status').textContent = 'Tracking #' + p.node;
@@ -611,7 +633,7 @@ setInterval(() => {
 }, 1000);
 
 // ---------- Bluetooth ----------
-let device = null, demoTimer = null;
+let device = null;
 function setConn(ok, text) { $('dot').className = 'dot' + (ok ? ' ok' : ''); $('status').textContent = text; }
 
 async function connectGatt() {
@@ -637,30 +659,10 @@ async function onDisconnected() {
 $('connectBtn').onclick = async () => {
   if (!navigator.bluetooth) { alert('Web Bluetooth needs Chrome on Android, on a page served over HTTPS.'); return; }
   try {
-    stopDemo();
     device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
     device.addEventListener('gattserverdisconnected', onDisconnected);
     await connectGatt();
   } catch (e) { setConn(false, e.name === 'NotFoundError' ? 'Not connected' : 'Error: ' + e.message); }
-};
-
-// ---------- Demo mode (no hardware needed) ----------
-function stopDemo() { if (demoTimer) { clearInterval(demoTimer); demoTimer = null; $('demoBtn').classList.remove('on'); } }
-$('demoBtn').onclick = () => {
-  if (demoTimer) { stopDemo(); return; }
-  $('demoBtn').classList.add('on');
-  const c = me || { lat: 47.0, lon: -109.6 };
-  let t = 0, seq = 0;
-  demoTimer = setInterval(() => {
-    t += 0.08;
-    const buf = new DataView(new ArrayBuffer(18));
-    buf.setUint8(0, MAGIC); buf.setUint8(1, 1); buf.setUint16(2, seq++, true);
-    buf.setInt32(4, Math.round((c.lat + 0.004 * Math.sin(t)) * 1e7), true);
-    buf.setInt32(8, Math.round((c.lon + 0.006 * Math.cos(t)) * 1e7), true);
-    buf.setInt16(12, 1200, true); buf.setUint8(14, 18); buf.setUint8(15, 0x80 | 9);
-    buf.setInt8(16, -90); buf.setInt8(17, 7);
-    handlePacket(buf);
-  }, 1000);
 };
 
 // ---------- offline caching (needs one visit over HTTPS first) ----------

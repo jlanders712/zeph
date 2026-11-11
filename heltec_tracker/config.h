@@ -8,6 +8,8 @@
 #define ROLE_RECEIVER  2   // receives LoRa, relays to phone over BLE
 #define ROLE           ROLE_TRACKER      // <-- change to ROLE_RECEIVER for board #2
 
+#define HAS_SCREEN 1    // 0 for boards without the OLED 
+
 #define NODE_ID        1                 // identifies this tracker in packets
 
 // ---------------- LoRa radio settings (must match on both boards) ----------------
@@ -75,5 +77,6 @@ struct __attribute__((packed)) Pkt {
   int16_t  alt_m;      // metres
   uint8_t  speed_kmh;  // capped at 255
   uint8_t  sats_fix;   // bits 0-6 = satellites, bit 7 = valid fix
+  uint16_t batt_mv;    // battery millivolts, 0 = unknown
 };
 // BLE notification to phone = Pkt (16 bytes) + int8 RSSI dBm + int8 SNR dB = 18 bytes
