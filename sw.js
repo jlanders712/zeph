@@ -1,5 +1,5 @@
 // Caches the page, map libraries and fonts so everything opens with no internet after the first visit.
-const CACHE = 'loratrack-v5';
+const CACHE = 'loratrack-v6';
 const ASSETS = [
  "./",
  "index.html",

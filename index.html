@@ -180,7 +180,7 @@ const idb = (() => {
 function distance(a, b) {
   const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
   const h = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon/2)**2;
-  return 2 * R * Math.asin(Math.sqrt(h));
+  return 2 * R * Math.asin(Math.sqrt(h))
 }
 function bearing(a, b) {
   const y = Math.sin(rad(b.lon - a.lon)) * Math.cos(rad(b.lat));
@@ -188,10 +188,10 @@ function bearing(a, b) {
             Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lon - a.lon));
   return (deg(Math.atan2(y, x)) + 360) % 360;
 }
-const fmtDist = m => m < 1000 ? Math.round(m) + ' m' : (m/1000).toFixed(2) + ' km';
-function toXY(p, o) {   // local flat projection, metres east/north of origin o
-  return { x: (p.lon - o.lon) * M_PER_DEG * Math.cos(rad(o.lat)), y: (p.lat - o.lat) * M_PER_DEG };
-}
+const fmtDist = m => {
+  const ft = m * 3.28084;
+  return ft < 1000 ? Math.round(ft) + ' ft' : (m / 1609.344).toFixed(2) + ' mi';
+};
 function niceStep(m) {
   const pow = Math.pow(10, Math.floor(Math.log10(m)));
   const f = m / pow;
@@ -674,8 +674,8 @@ function handlePacket(dv) {
     if (trail.length > MAX_TRAIL) trail.shift();
     saveTrail();
   }
-  $('spd').textContent = p.spd + ' km/h';
-  $('alt').textContent = p.alt + ' m';
+  $('spd').textContent = p.spd + ' mph';
+  $('alt').textContent = p.alt + ' ft';
   refresh();
 }
 

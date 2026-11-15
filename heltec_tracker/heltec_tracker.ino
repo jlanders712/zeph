@@ -115,7 +115,6 @@ static void logDistance(uint32_t now) {
   if (now - lastLog < 2000) return;
   lastLog = now;
   double dist = calculateHaversineDistance(45.3, -114.6, 48.3, -113.6);
-  Serial.printf("Distance: %.2f",dist);
 }
 
 // ---------------- Status LED ----------------
@@ -203,8 +202,8 @@ static void sendPosition() {
   if (fix) {
     p.lat_e7 = (int32_t)lround(gps.location.lat() * 1e7);
     p.lon_e7 = (int32_t)lround(gps.location.lng() * 1e7);
-    if (gps.altitude.isValid()) p.alt_m = (int16_t)gps.altitude.meters();
-    if (gps.speed.isValid())    p.speed_kmh = (uint8_t)constrain((int)gps.speed.kmph(), 0, 255);
+    if (gps.altitude.isValid()) p.alt_ft = (int16_t)gps.altitude.feet();
+    if (gps.speed.isValid())    p.speed_mph = (uint8_t)constrain((int)gps.speed.mph(), 0, 255);
   }
   uint32_t sats = gps.satellites.isValid() ? gps.satellites.value() : 0;
   p.sats_fix = (uint8_t)(min<uint32_t>(sats, 127) | (fix ? 0x80 : 0));
@@ -236,6 +235,11 @@ void loop() {
 
   static uint32_t lastTx = 0, lastRadioTry = 0;
   uint32_t now = millis();
+
+  if (now - lastBlink >= 10000) {
+    lastBlink = now;
+    ledBlink(100,1);
+  }
 
   if (!radioOk && now - lastRadioTry >= 5000) {   // keep retrying the radio in the background
     lastRadioTry = now;
@@ -376,7 +380,7 @@ void loop() {
 
     Serial.printf("RX seq=%u lat=%.6f lon=%.6f rssi=%.0f snr=%.1f\n", p.seq,
                   p.lat_e7 / 1e7, p.lon_e7 / 1e7, rssi, snr);
-    Serial.printf("Tracker batt=%uV %d%%\n", p.batt_mv / 1000, batteryPercent(p.batt_mv));
+    Serial.printf("Tracker batt=%.2fV %d%%\n", p.batt_mv / 1000.0, batteryPercent(p.batt_mv));
     u8g2.clearBuffer();
     drawCoords(p.seq, p.sats_fix, p.lat_e7, p.lon_e7, rssi, snr);
     drawBattery(mv, batteryPercent(mv));

@@ -6,7 +6,7 @@
 
 #define ROLE_TRACKER   1   // has GPS module, transmits position over LoRa
 #define ROLE_RECEIVER  2   // receives LoRa, relays to phone over BLE
-#define ROLE           ROLE_RECEIVER      // <-- change to ROLE_RECEIVER for board #2
+#define ROLE           ROLE_TRACKER      // <-- change to ROLE_RECEIVER for board #2
 
 #define HAS_SCREEN 1    // 0 for boards without the OLED 
 
@@ -74,8 +74,8 @@ struct __attribute__((packed)) Pkt {
   uint16_t seq;        // increments each send
   int32_t  lat_e7;     // degrees * 1e7
   int32_t  lon_e7;
-  int16_t  alt_m;      // metres
-  uint8_t  speed_kmh;  // capped at 255
+  int16_t  alt_ft;      // feet
+  uint8_t  speed_mph;  // capped at 255
   uint8_t  sats_fix;   // bits 0-6 = satellites, bit 7 = valid fix
   uint16_t batt_mv;    // battery millivolts, 0 = unknown
 };
