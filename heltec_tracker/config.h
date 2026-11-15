@@ -6,7 +6,7 @@
 
 #define ROLE_TRACKER   1   // has GPS module, transmits position over LoRa
 #define ROLE_RECEIVER  2   // receives LoRa, relays to phone over BLE
-#define ROLE           ROLE_TRACKER      // <-- change to ROLE_RECEIVER for board #2
+#define ROLE           ROLE_RECEIVER      // <-- change to ROLE_RECEIVER for board #2
 
 #define HAS_SCREEN 1    // 0 for boards without the OLED 
 
@@ -80,3 +80,18 @@ struct __attribute__((packed)) Pkt {
   uint16_t batt_mv;    // battery millivolts, 0 = unknown
 };
 // BLE notification to phone = Pkt (16 bytes) + int8 RSSI dBm + int8 SNR dB = 18 bytes
+
+// Receiver packet
+#define BLE_CHAR2_UUID "8a1f0003-5b7c-4a52-9c3e-0d4b6f2e7a10"
+#define RXINFO_MAGIC   0xA6
+
+struct __attribute__((packed)) RxInfo {
+  uint8_t  magic;      // 0xA6
+  uint8_t  flags;      // bit0 = radio ok, bit1 = GPS fix
+  uint8_t  sats;
+  uint16_t batt_mv;
+  uint16_t hdop;       // hundredths
+  uint16_t rx_count;   // good tracker packets
+  uint16_t bad_count;  // ignored packets
+  uint32_t uptime_s;
+};

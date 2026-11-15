@@ -19,6 +19,9 @@ HardwareSerial GPSSerial(1);
 #if ROLE == ROLE_RECEIVER
   #include <NimBLEDevice.h>
   NimBLECharacteristic* bleChr = nullptr;
+  NimBLECharacteristic* bleInfoChr = nullptr;
+  static bool bleConnected = false;
+  static uint16_t rxCount = 0, rxBad = 0;
 #endif
 
 SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY);
@@ -255,10 +258,12 @@ volatile bool rxFlag = false;
 void IRAM_ATTR onRx() { rxFlag = true; }
 
 class ServerCb : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* s, NimBLEConnInfo& info) override { Serial.println("BLE connected"); }
+  void onConnect(NimBLEServer* s, NimBLEConnInfo& info) override { 
+    Serial.println("BLE connected"); bleConnected = true;}
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo& info, int reason) override {
     Serial.println("BLE disconnected");
     NimBLEDevice::startAdvertising();
+    bleConnected = false;
   }
 };
 
@@ -268,6 +273,7 @@ static void bleInit() {
   srv->setCallbacks(new ServerCb());
   NimBLEService* svc = srv->createService(BLE_SERVICE_UUID);
   bleChr = svc->createCharacteristic(BLE_CHAR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  bleInfoChr = svc->createCharacteristic(BLE_CHAR2_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   svc->start();
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_SERVICE_UUID);
@@ -279,6 +285,23 @@ static void startRx() {
   radio.setDio1Action(onRx);
   femRx();
   radio.startReceive();
+}
+
+static void sendRxInfo(uint32_t now) {
+  static uint32_t last = 0;
+  if (!bleConnected || !bleInfoChr || now - last < 2000) return;
+  last = now;
+  RxInfo r = {};
+  r.magic    = RXINFO_MAGIC;
+  r.flags    = (radioOk ? 1 : 0) | (gps.location.isValid() ? 2 : 0);
+  r.sats     = gps.satellites.isValid() ? (uint8_t)constrain((int)gps.satellites.value(), 0, 255) : 0;
+  r.batt_mv  = (uint16_t)batteryMv();
+  r.hdop     = gps.hdop.isValid() ? (uint16_t)constrain((int)gps.hdop.value(), 0, 65535) : 0;
+  r.rx_count = rxCount;
+  r.bad_count = rxBad;
+  r.uptime_s = now / 1000;
+  bleInfoChr->setValue((uint8_t*)&r, sizeof(r));
+  bleInfoChr->notify();
 }
 
 void setup() {
@@ -327,6 +350,7 @@ void loop() {
 
   logGps(now);
   logDistance(now);
+  sendRxInfo(now);
 
   if (!radioOk || !rxFlag) return;
   rxFlag = false;

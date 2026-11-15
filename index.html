@@ -30,8 +30,19 @@
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--bad); margin-right:6px; }
   .dot.ok { background:var(--ok); }
   .panel { position:absolute; z-index:10; left:10px; right:10px; bottom:max(10px, env(safe-area-inset-bottom));
-    background:var(--panel); border-radius:16px; padding:12px 14px; box-shadow:0 2px 12px #0008;
-    display:grid; grid-template-columns:repeat(4, 1fr); gap:10px 8px; }
+      background:var(--panel); border-radius:16px; padding:12px 0 8px; box-shadow:0 2px 12px #0008; }
+  .pages { display:flex; overflow-x:auto; scroll-snap-type:x mandatory; scrollbar-width:none;
+    touch-action:pan-x; overscroll-behavior-x:contain; }
+  .pages::-webkit-scrollbar { display:none; }
+  .page { flex:0 0 100%; scroll-snap-align:start; padding:0 14px; display:grid;
+    grid-template-columns:repeat(3, 1fr); gap:10px 8px; align-content:start; }
+  .page.big { grid-template-columns:repeat(2, 1fr); }
+  .page.big .v { font-size:26px; }
+  .stat .l { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pagebar { display:flex; align-items:center; justify-content:center; gap:6px; margin-top:8px; font-size:11px; color:var(--dim); }
+  .pagebar i { width:7px; height:7px; border-radius:50%; background:#3a4656; }
+  .pagebar i.on { background:var(--text); }
+  .attr { padding:6px 14px 0; }
   .stat .v { font-size:18px; font-weight:600; }
   .stat .l { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
   .stat.wide { grid-column: span 2; }
@@ -41,7 +52,6 @@
   #toast { position:absolute; z-index:20; left:50%; transform:translateX(-50%); top:calc(max(10px, env(safe-area-inset-top)) + 54px);
     background:var(--panel); padding:9px 14px; border-radius:12px; max-width:calc(100% - 90px); box-shadow:0 2px 12px #000a;
     display:none; font-size:14px; }
-  @media (max-width:380px) { .panel { grid-template-columns:repeat(2, 1fr); } }
 </style>
 </head>
 <body>
@@ -72,14 +82,31 @@
 <div id="toast"></div>
 
 <div class="panel" id="panel">
-  <div class="stat"><div class="v" id="dist">–</div><div class="l">Distance</div></div>
-  <div class="stat"><div class="v"><span id="arrow">➤</span> <span id="brg">–</span></div><div class="l">Bearing</div></div>
-  <div class="stat"><div class="v" id="spd">–</div><div class="l">Speed</div></div>
-  <div class="stat"><div class="v" id="alt">–</div><div class="l">Altitude</div></div>
-  <div class="stat"><div class="v" id="sats">–</div><div class="l">Satellites</div></div>
-  <div class="stat"><div class="v" id="sig">–</div><div class="l">RSSI / SNR</div></div>
-  <div class="stat"><div class="v" id="age">–</div><div class="l">Last update</div></div>
-  <div class="stat"><div class="v" id="batt">–</div><div class="l" id="battL">Tracker batt</div></div>
+  <div class="pages" id="pages">
+    <div class="page big">
+      <div class="stat"><div class="v" id="dist">–</div><div class="l">Distance</div></div>
+      <div class="stat"><div class="v"><span id="arrow">➤</span> <span id="brg">–</span></div><div class="l">Bearing</div></div>
+      <div class="stat"><div class="v" id="spd">–</div><div class="l">Speed</div></div>
+      <div class="stat"><div class="v" id="alt">–</div><div class="l">Altitude</div></div>
+    </div>
+    <div class="page">
+      <div class="stat"><div class="v" id="batt">–</div><div class="l" id="battL">Battery</div></div>
+      <div class="stat"><div class="v" id="sats">–</div><div class="l" id="satsL">GPS sats</div></div>
+      <div class="stat"><div class="v" id="sig">–</div><div class="l">RSSI / SNR</div></div>
+      <div class="stat"><div class="v" id="pkts">–</div><div class="l">Packets</div></div>
+      <div class="stat"><div class="v" id="lost">–</div><div class="l">Lost</div></div>
+      <div class="stat"><div class="v" id="age">–</div><div class="l">Last update</div></div>
+    </div>
+    <div class="page">
+      <div class="stat"><div class="v" id="rxBatt">–</div><div class="l" id="rxBattL">Battery</div></div>
+      <div class="stat"><div class="v" id="rxGps">–</div><div class="l" id="rxGpsL">GPS sats</div></div>
+      <div class="stat"><div class="v" id="rxRadio">–</div><div class="l">Radio</div></div>
+      <div class="stat"><div class="v" id="rxCount">–</div><div class="l">Received</div></div>
+      <div class="stat"><div class="v" id="rxBad">–</div><div class="l">Ignored</div></div>
+      <div class="stat"><div class="v" id="rxUp">–</div><div class="l">Uptime</div></div>
+    </div>
+  </div>
+  <div class="pagebar" id="pagebar"><i class="on"></i><i></i><i></i><span id="ptitle">Tracker position</span></div>
   <div class="attr" id="attrib">Map data © OpenStreetMap contributors · Protomaps · Terrain: Mapterhorn</div>
 </div>
 
@@ -94,6 +121,8 @@
 // ---- must match config.h ----
 const SERVICE = '8a1f0001-5b7c-4a52-9c3e-0d4b6f2e7a10';
 const CHAR    = '8a1f0002-5b7c-4a52-9c3e-0d4b6f2e7a10';
+const CHAR2 = '8a1f0003-5b7c-4a52-9c3e-0d4b6f2e7a10';
+let lastSeq = null, gotPkts = 0, lostPkts = 0;
 const MAGIC   = 0xA5;
 
 const $ = id => document.getElementById(id);
@@ -574,6 +603,39 @@ function battPct(mv) {
 }
 
 // ---------- packet handling ----------
+function setBatt(valId, labelId, mv) {
+  if (!(mv > 0)) { $(valId).textContent = '–'; return; }
+  const pct = battPct(mv);
+  $(valId).textContent = pct + '%';
+  $(valId).style.color = pct <= 15 ? 'var(--bad)' : '';
+  $(labelId).textContent = 'Batt ' + (mv / 1000).toFixed(2) + 'V';
+}
+const fmtUp = s => s >= 3600 ? Math.floor(s/3600) + 'h ' + Math.floor(s%3600/60) + 'm'
+                 : s >= 60 ? Math.floor(s/60) + 'm ' + (s%60) + 's' : s + 's';
+
+function handleRxInfo(dv) {
+  if (dv.byteLength < 15 || dv.getUint8(0) !== 0xA6) return;
+  const flags = dv.getUint8(1);
+  setBatt('rxBatt', 'rxBattL', dv.getUint16(3, true));
+  $('rxGps').textContent = dv.getUint8(2);
+  $('rxGpsL').textContent = (flags & 2) ? 'Sats · HDOP ' + (dv.getUint16(5, true) / 100).toFixed(1) : 'Sats · no fix';
+  $('rxRadio').textContent = (flags & 1) ? 'OK' : 'FAIL';
+  $('rxRadio').style.color = (flags & 1) ? '' : 'var(--bad)';
+  $('rxCount').textContent = dv.getUint16(7, true);
+  $('rxBad').textContent = dv.getUint16(9, true);
+  $('rxUp').textContent = fmtUp(dv.getUint32(11, true));
+}
+
+// swipe pages: dots + title follow the scroll position
+const pagesEl = $('pages'), dotEls = $('pagebar').querySelectorAll('i');
+const TITLES = ['Tracker position', 'Tracker status', 'Receiver status'];
+pagesEl.addEventListener('scroll', () => {
+  const i = Math.round(pagesEl.scrollLeft / pagesEl.clientWidth);
+  dotEls.forEach((d, k) => d.classList.toggle('on', k === i));
+  $('ptitle').textContent = TITLES[i] || '';
+}, { passive: true });
+dotEls.forEach((d, k) => d.onclick = () => pagesEl.scrollTo({ left: k * pagesEl.clientWidth, behavior: 'smooth' }));
+
 function handlePacket(dv) {
   if (dv.byteLength < 20 || dv.getUint8(0) !== MAGIC) return;
   const le = true;
@@ -591,16 +653,17 @@ function handlePacket(dv) {
     snr:  dv.getInt8(19),
   };
   lastRx = Date.now();
-  $('sats').textContent = p.sats;
-  $('sig').textContent = p.rssi + ' / ' + p.snr;
-  if (p.batt > 0) {
-    const pct = battPct(p.batt);
-    $('batt').textContent = pct + '%';
-    $('batt').style.color = pct <= 15 ? 'var(--bad)' : '';
-    $('battL').textContent = 'Batt ' + (p.batt / 1000).toFixed(2) + 'V';
-  } else {
-    $('batt').textContent = '–';
+  if (lastSeq !== null) {
+  const gap = (p.seq - lastSeq) & 0xFFFF;
+  if (gap > 1 && gap < 1000) lostPkts += gap - 1;   // big gaps = tracker restarted, ignore
   }
+  lastSeq = p.seq; gotPkts++;
+  $('pkts').textContent = gotPkts;
+  $('lost').textContent = lostPkts;
+  $('sats').textContent = p.sats;
+  $('satsL').textContent = p.fix ? 'GPS sats · fix' : 'GPS sats · no fix';
+  $('sig').textContent = p.rssi + ' / ' + p.snr;
+  setBatt('batt', 'battL', p.batt);
   if (!p.fix) { $('status').textContent = 'Tracker has no GPS fix'; return; }
 
   $('status').textContent = 'Tracking #' + p.node;
@@ -643,6 +706,12 @@ async function connectGatt() {
   const chr = await svc.getCharacteristic(CHAR);
   chr.addEventListener('characteristicvaluechanged', e => handlePacket(e.target.value));
   await chr.startNotifications();
+  try {   // a receiver flashed before this change has no second characteristic
+    const chr2 = await svc.getCharacteristic(CHAR2);
+    chr2.addEventListener('characteristicvaluechanged', e => handleRxInfo(e.target.value));
+    await chr2.startNotifications();
+    try { handleRxInfo(await chr2.readValue()); } catch (e) {}
+  } catch (e) { console.warn('no receiver info characteristic', e); }
   setConn(true, 'Connected, waiting for tracker…');
   try { handlePacket(await chr.readValue()); } catch (e) {}
 }
