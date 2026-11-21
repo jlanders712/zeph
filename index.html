@@ -481,7 +481,17 @@ async function initMap() {
           const demSource = new mlcontour.DemSource({
             url: DEM_PREFIX + '{z}/{x}/{y}', encoding: 'terrarium', maxzoom: ht.maxZoom,
             worker: false, cacheSize: 100, timeoutMs: 15000, id: 'dem' + (++demSeq) });
-          demSource.setupMaplibre(maplibregl);
+          
+          // Give MapLibre its own copy of every tile buffer, so the plugin's cached one isn't "detached"
+          const origAdd = maplibregl.addProtocol;
+          maplibregl.addProtocol = (name, fn) => origAdd.call(maplibregl, name, async (params, abort) => {
+            const r = await fn(params, abort);
+            if (r && r.data instanceof ArrayBuffer) return Object.assign({}, r, { data: r.data.slice(0) });
+            if (r && r.data && r.data.buffer instanceof ArrayBuffer) return Object.assign({}, r, { data: r.data.slice().buffer });
+            return r;
+          });
+          try { demSource.setupMaplibre(maplibregl); } finally { maplibregl.addProtocol = origAdd; }
+
           contourUrl = demSource.contourProtocolUrl({
             multiplier: CONTOUR_FEET ? 3.28084 : 1, thresholds: CONTOUR_THRESHOLDS,
             contourLayer: 'contours', elevationKey: 'ele', levelKey: 'level', extent: 4096, buffer: 1 });
