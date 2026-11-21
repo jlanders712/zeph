@@ -257,9 +257,11 @@ void loop() {
 // =====================================================================
 #else  // ROLE_RECEIVER
 // =====================================================================
-
+ScreenData screen;
+static uint32_t lastScreenRefresh = 0; 
 volatile bool rxFlag = false;
 void IRAM_ATTR onRx() { rxFlag = true; }
+static void onShortPress() { nextScreen(screen); } //wrapper to pass screen to nextScreen
 
 class ServerCb : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* s, NimBLEConnInfo& info) override { 
@@ -313,6 +315,7 @@ void setup() {
   ledBlink(100,5);                       // power-on / wake flash
   powerInit();
   powerSetBeforeSleep(prepareForSleep);
+  powerSetShortPress(onShortPress);
 
   Serial.begin(115200);
   for (uint32_t t = millis(); !Serial && millis() - t < 1500; ) delay(10);
@@ -320,14 +323,6 @@ void setup() {
 
   gpsInit();
   drawInit();                       // also switches Vext on for the OLED (VEXT_ON_LEVEL in config.h)
-  u8g2.clearBuffer();
-  u8g2.drawStr(0, 12, "Waiting for tracker");
-  int bootMv = batteryMv();
-  drawBattery(bootMv, batteryPercent(bootMv));
-  // Layout tests, re-enable while tuning the screen:
-  // drawArrow(105, 32, 30, 107);
-  // drawCoords(1, 0x82, 463000000, -1119000000, -90, 5);
-  u8g2.sendBuffer();
 
   radioOk = radioInit();            // no blocking loop: BLE, display and the sleep button keep working
   if (radioOk) startRx();
@@ -335,7 +330,7 @@ void setup() {
 }
 
 void loop() {
-  powerPoll();                      // must stay above the early returns below
+  powerPoll();
   pumpGps();
 
   static uint32_t lastRadioTry = 0;
@@ -344,6 +339,13 @@ void loop() {
   if (now - lastBlink >= 10000) {
     lastBlink = now;
     ledBlink(100,1);
+  }
+
+  if (now - lastScreenRefresh >= 5000) {
+    // Send receiver info
+    lastScreenRefresh = now;
+    screen.rxMv = batteryMv(); screen.radioOk = radioOk; screen.rxBad = rxBad; screen.rxCount = rxCount;
+    updateCurrentScreen(screen);
   }
 
   if (!radioOk && now - lastRadioTry >= 5000) {   // keep retrying the radio in the background
@@ -367,6 +369,7 @@ void loop() {
   float snr  = radio.getSNR();
 
   if (st == RADIOLIB_ERR_NONE && len == sizeof(Pkt) && buf[0] == PKT_MAGIC) {
+    rxCount++;
     int mv = batteryMv();
     Pkt p;
     memcpy(&p, buf, sizeof(p));
@@ -381,11 +384,15 @@ void loop() {
     Serial.printf("RX seq=%u lat=%.6f lon=%.6f rssi=%.0f snr=%.1f\n", p.seq,
                   p.lat_e7 / 1e7, p.lon_e7 / 1e7, rssi, snr);
     Serial.printf("Tracker batt=%.2fV %d%%\n", p.batt_mv / 1000.0, batteryPercent(p.batt_mv));
-    u8g2.clearBuffer();
-    drawCoords(p.seq, p.sats_fix, p.lat_e7, p.lon_e7, rssi, snr);
-    drawBattery(mv, batteryPercent(mv));
-    u8g2.sendBuffer();
+
+    screen.seq = p.seq; screen.rssi = rssi; screen.snr = snr; screen.lat_e7 = p.lat_e7; screen.lon_e7 = p.lon_e7;
+    screen.satsFix = p.sats_fix; screen.trackerMv = p.batt_mv; 
+    screen.rxMv = mv; screen.radioOk = radioOk; screen.rxBad = rxBad; screen.rxCount = rxCount; screen.trackerFound = true;
+    updateCurrentScreen(screen);
+    lastScreenRefresh = now;
+
   } else {
+    rxBad++;
     Serial.printf("RX ignored (status %d, len %u)\n", st, (unsigned)len);
   }
   radio.startReceive();

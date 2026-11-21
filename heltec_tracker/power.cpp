@@ -3,7 +3,8 @@
 #include "driver/gpio.h"
 
 static void (*beforeSleep)() = nullptr;
-
+static void (*onShortPress)() = nullptr;
+void powerSetShortPress(void (*cb)()) { onShortPress = cb; }
 void powerSetBeforeSleep(void (*cb)()) { beforeSleep = cb; }
 
 static void goToSleep() {
@@ -27,14 +28,21 @@ void powerInit() {
     while (digitalRead(BTN_PIN) == LOW) delay(10);
     delay(100);
   }
+  for (uint32_t t = millis(); digitalRead(BTN_PIN) == LOW && millis() - t < 3000; ) delay(10); //avoid changing screens on wakeup
 }
 
 void powerPoll() {
-  static uint32_t pressStart = 0;
-  if (digitalRead(BTN_PIN) == LOW) {
-    if (pressStart == 0) pressStart = millis();
-    if (millis() - pressStart > LONG_PRESS_MS) goToSleep();
-  } else {
-    pressStart = 0;
+  static bool down = false;
+  static uint32_t pressStart = 0, lastChange = 0;
+  uint32_t now = millis();
+  bool low = (digitalRead(BTN_PIN) == LOW);
+
+  if (low && !down && now - lastChange > 30) {            // pressed (30 ms debounce)
+    down = true; pressStart = now; lastChange = now;
+  } else if (!low && down && now - lastChange > 30) {     // released
+    down = false; lastChange = now;
+    if (now - pressStart < LONG_PRESS_MS && onShortPress) onShortPress();
+  } else if (low && down && now - pressStart > LONG_PRESS_MS) {
+    goToSleep();                                          // long press, still held
   }
 }

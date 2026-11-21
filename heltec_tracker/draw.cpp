@@ -4,7 +4,11 @@
 #include <U8g2lib.h>
 #include <cmath>
 #include <Wire.h>
+
 bool screenPresent = false;
+int lastButtonState = HIGH;
+unsigned long pressStartTime = 0;
+static int screenId = 0; // current screen index
 
 // rotation, reset pin, SCL pin, SDA pin
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, 21, 18, 17);
@@ -50,16 +54,6 @@ void drawArrow(int cx, int cy, int len, float bearingDeg) {
   u8g2.drawTriangle(tipX, tipY, lx, ly, rx, ry);  // filled head
 }
 
-// Note: printf's %f needs a double. The old version passed ints, which prints garbage.
-void drawCoords(int seq, int sats_fix, int32_t lat_e7, int32_t lon_e7, float rssi, float snr) {
-  if (!screenPresent) return;
-  u8g2.setCursor(0, 10);  u8g2.printf("Seq %d  Sats %d", seq, sats_fix & 0x7F);
-  u8g2.setCursor(0, 22);  u8g2.printf("Lat %.5f", lat_e7 / 1e7);
-  u8g2.setCursor(0, 34);  u8g2.printf("Lon %.5f", lon_e7 / 1e7);
-  u8g2.setCursor(0, 46);  u8g2.printf("RSSI %.0f SNR %.1f", rssi, snr);
-  u8g2.setCursor(0, 58);  u8g2.print((sats_fix & 0x80) ? "GPS fix" : "No GPS fix");
-}
-
 // Right-aligned in the bottom-right corner, on the same baseline as the last status line.
 void drawBattery(int mv, int pct) {
   if (!screenPresent) return;
@@ -76,7 +70,6 @@ void drawSleeping() {
   u8g2.drawStr(34, 36, "Sleeping...");
   u8g2.sendBuffer();
 }
-
 
 // ============= Haversine distance
 // Earth's radius in kilometers. Use 3956.0 for miles.
@@ -109,3 +102,72 @@ double calculateHaversineDistance(double lat1, double lon1, double lat2, double 
     return EARTH_RADIUS_KM * c;
 }
 
+//============= screen orchestrators ===========================
+// Note: printf's %f needs a double. The old version passed ints, which prints garbage.
+void drawCoords(const ScreenData& d) {
+  if (!screenPresent) return;
+  if (d.trackerFound) & (d.satsFix & 0x80) {
+    u8g2.clearBuffer();
+    u8g2.setCursor(0, 10);  u8g2.printf("Lat %.5f", d.lat_e7 / 1e7);
+    u8g2.setCursor(0, 22);  u8g2.printf("Lon %.5f", d.lon_e7 / 1e7);
+    u8g2.setCursor(0, 34);  u8g2.printf("Distance %.1f ft", calculateHaversineDistance(45.3, -114.6, 48.3, -113.6));
+    u8g2.setCursor(0, 46);  u8g2.print("GPS fix");
+    drawArrow(105, 32, 30, 107);
+    u8g2.sendBuffer();
+  }
+  else if (!d.trackerFound) & (!(d.satsFix & 0x80)) {
+    u8g2.clearBuffer();
+    u8g2.setCursor(0, 10);  u8g2.printf("Tracker Status");
+    u8g2.setCursor(0, 34);  u8g2.print("No GPS fix");
+    drawBattery(d.trackerMv, batteryPercent(d.trackerMv));
+    u8g2.sendBuffer();
+  }
+  else {
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 12, "Waiting for tracker");
+    u8g2.sendBuffer();
+  }
+}
+
+void drawTrackerInfo(const ScreenData& d) {
+  if (!screenPresent) return;
+  if (d.trackerFound) {
+    u8g2.clearBuffer();
+    u8g2.setCursor(0, 10);  u8g2.printf("Tracker Status");
+    u8g2.setCursor(0, 22);  u8g2.printf("Seq %d  Sats %d", d.seq, d.satsFix & 0x7F);
+    u8g2.setCursor(0, 34);  u8g2.printf("RSSI %.0f SNR %.1f", d.rssi, d.snr);
+    u8g2.setCursor(0, 46);  u8g2.print((d.satsFix & 0x80) ? "GPS fix" : "No GPS fix");
+    drawBattery(d.trackerMv, batteryPercent(d.trackerMv));
+    u8g2.sendBuffer();
+  }
+  else {
+    u8g2.clearBuffer();
+    u8g2.setCursor(0, 10);  u8g2.printf("Tracker Status");
+    u8g2.drawStr(0, 34, "Waiting for tracker");
+    u8g2.sendBuffer();
+  }
+}
+
+void drawReceiverInfo(const ScreenData& d) {
+  if (!screenPresent) return;
+  u8g2.clearBuffer();
+  u8g2.setCursor(0, 10);  u8g2.printf("Receiver Status");
+  u8g2.setCursor(0, 22);  u8g2.printf("Received %d  Ignored %d", d.rxCount, d.rxBad);
+  u8g2.setCursor(0, 34);  u8g2.printf("Radio %s ", d.radioOk ? "ok" : "NOT READY");
+  drawBattery(d.rxMv, batteryPercent(d.rxMv));
+  u8g2.sendBuffer();
+}
+
+typedef void (*ActionFunction)(const ScreenData&);
+ActionFunction actions[] = { drawCoords, drawTrackerInfo, drawReceiverInfo };
+
+const int numActions = sizeof(actions) / sizeof(actions[0]);
+
+void nextScreen(const ScreenData& d) {
+  screenId = (screenId + 1) % numActions;
+  actions[screenId](d);
+}
+
+void updateCurrentScreen(const ScreenData& d) {
+  actions[screenId](d);
+}

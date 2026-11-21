@@ -77,6 +77,8 @@
   </button>
   <button id="clearBtn" class="small">Clear</button>
   <button id="mapBtn" class="small">Map</button>
+  <button id="expBtn" class="small">Export</button>
+  <button id="gpxBtn" class="small">GPX</button>
 </div>
 <input type="file" id="fileIn" multiple hidden>
 <div id="toast"></div>
@@ -636,6 +638,58 @@ pagesEl.addEventListener('scroll', () => {
 }, { passive: true });
 dotEls.forEach((d, k) => d.onclick = () => pagesEl.scrollTo({ left: k * pagesEl.clientWidth, behavior: 'smooth' }));
 
+
+const MAX_LOG = 20000;          // about 28 hours at one packet every 5 s
+let log = [];
+const saveLog = () => idb.put('log', log).catch(() => {});
+
+function exportLog() {
+  if (!log.length) { toast('Nothing logged yet'); return; }
+  const cols = ['time','seq','fix','lat','lon','alt_ft','speed_mph','sats','tracker_mv',
+                'rssi_dbm','snr_db','dist_ft','bearing_deg','phone_lat','phone_lon','phone_acc_m'];
+  const rows = log.map(r => [new Date(r.t).toISOString(), r.seq, r.fix, r.lat, r.lon, r.alt, r.spd,
+    r.sats, r.batt, r.rssi, r.snr, r.dist, r.brg, r.mlat, r.mlon, r.macc].join(','));
+  const blob = new Blob([cols.join(',') + '\n' + rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'loratrack-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+$('expBtn').onclick = exportLog;
+addEventListener('pagehide', saveLog);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveLog(); });
+
+function saveFile(name, type, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+function exportGpx() {
+  const pts = log.filter(r => r.fix && r.lat !== '' && r.lon !== '');
+  if (!pts.length) { toast('No GPS positions logged yet'); return; }
+  const GAP_MS = 120000;                       // start a new segment after a 2-minute gap
+  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<gpx version="1.1" creator="LoRa Tracker" xmlns="http://www.topografix.com/GPX/1/1">\n' +
+    '<trk><name>LoRa Tracker ' + new Date(pts[0].t).toISOString().slice(0, 10) + '</name>\n<trkseg>\n';
+  let prev = null;
+  for (const r of pts) {
+    if (prev && r.t - prev.t > GAP_MS) xml += '</trkseg>\n<trkseg>\n';
+    xml += '<trkpt lat="' + r.lat.toFixed(7) + '" lon="' + r.lon.toFixed(7) + '">' +
+           '<ele>' + (r.alt * 0.3048).toFixed(1) + '</ele>' +      // packet altitude is feet, GPX wants metres
+           '<time>' + new Date(r.t).toISOString() + '</time>' +
+           '<sat>' + r.sats + '</sat></trkpt>\n';
+    prev = r;
+  }
+  xml += '</trkseg></trk>\n</gpx>\n';
+  saveFile('loratrack-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.gpx',
+           'application/gpx+xml', xml);
+}
+$('gpxBtn').onclick = exportGpx;
+
 function handlePacket(dv) {
   if (dv.byteLength < 20 || dv.getUint8(0) !== MAGIC) return;
   const le = true;
@@ -653,6 +707,16 @@ function handlePacket(dv) {
     snr:  dv.getInt8(19),
   };
   lastRx = Date.now();
+  log.push({
+    t: Date.now(), seq: p.seq, fix: p.fix ? 1 : 0,
+    lat: p.fix ? p.lat : '', lon: p.fix ? p.lon : '',
+    alt: p.alt, spd: p.spd, sats: p.sats, batt: p.batt, rssi: p.rssi, snr: p.snr,
+    dist: (me && p.fix) ? Math.round(distance(me, p) * 3.28084) : '',
+    brg:  (me && p.fix) ? Math.round(bearing(me, p)) : '',
+    mlat: me ? me.lat : '', mlon: me ? me.lon : '', macc: (me && me.acc) ? Math.round(me.acc) : ''
+  });
+  if (log.length > MAX_LOG) log.shift();
+  if (log.length % 12 === 0) saveLog();      // about once a minute
   if (lastSeq !== null) {
   const gap = (p.seq - lastSeq) & 0xFFFF;
   if (gap > 1 && gap < 1000) lostPkts += gap - 1;   // big gaps = tracker restarted, ignore
@@ -747,6 +811,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   try {
     mapFiles.base = (await idb.get('base')) || null;
     mapFiles.terrain = (await idb.get('terrain')) || null;
+    try { log = (await idb.get('log')) || []; } catch (e) {}
   } catch (e) { console.warn('IndexedDB unavailable', e); }
   await initMap();
   if (mapMode) updateMap();

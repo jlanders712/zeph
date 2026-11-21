@@ -6,7 +6,7 @@
 
 #define ROLE_TRACKER   1   // has GPS module, transmits position over LoRa
 #define ROLE_RECEIVER  2   // receives LoRa, relays to phone over BLE
-#define ROLE           ROLE_TRACKER      // <-- change to ROLE_RECEIVER for board #2
+#define ROLE           ROLE_RECEIVER      // <-- change to ROLE_RECEIVER for board #2
 
 #define HAS_SCREEN 1    // 0 for boards without the OLED 
 
@@ -95,3 +95,7 @@ struct __attribute__((packed)) RxInfo {
   uint16_t bad_count;  // ignored packets
   uint32_t uptime_s;
 };
+
+//-------------Power settings----------------
+#define BTN_PIN        0      // PRG button
+#define LONG_PRESS_MS  1500   // hold this long to sleep
