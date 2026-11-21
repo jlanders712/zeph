@@ -680,6 +680,7 @@ function saveFile(name, type, text) {
 
 function exportGpx() {
   const pts = log.filter(r => r.fix && r.lat !== '' && r.lon !== '');
+  if (!pts.length) { exportTrailGpx(); return; }
   if (!pts.length) { toast('No GPS positions logged yet'); return; }
   const GAP_MS = 120000;                       // start a new segment after a 2-minute gap
   let xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
@@ -699,6 +700,16 @@ function exportGpx() {
            'application/gpx+xml', xml);
 }
 $('gpxBtn').onclick = exportGpx;
+
+function exportTrailGpx() {
+  if (!trail.length) { toast('No saved track'); return; }
+  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<gpx version="1.1" creator="LoRa Tracker" xmlns="http://www.topografix.com/GPX/1/1">\n' +
+    '<trk><name>LoRa Tracker (saved track)</name>\n<trkseg>\n';
+  for (const p of trail) xml += '<trkpt lat="' + p.lat.toFixed(6) + '" lon="' + p.lon.toFixed(6) + '"></trkpt>\n';
+  xml += '</trkseg></trk>\n</gpx>\n';
+  saveFile('loratrack-saved-track.gpx', 'application/gpx+xml', xml);
+}
 
 function handlePacket(dv) {
   if (dv.byteLength < 20 || dv.getUint8(0) !== MAGIC) return;
